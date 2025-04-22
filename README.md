@@ -5,7 +5,7 @@
 ## Запуск
 
 ```powershell
-npm install jszip axios
+npm install
 ```
 
 ```powershell
