@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
 import JSZip from 'jszip';
 import './App.css';
@@ -14,16 +14,8 @@ function App() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [images, setImages] = useState([]);
-  const [downloadUrl, setDownloadUrl] = useState(null);
-
-  // Очистка Blob URL при размонтировании
-  useEffect(() => {
-    return () => {
-      images.forEach(image => URL.revokeObjectURL(image.url));
-      if (downloadUrl) URL.revokeObjectURL(downloadUrl);
-    };
-  }, [images, downloadUrl]);
+  const [previewImages, setPreviewImages] = useState([]);
+  const [zipBlob, setZipBlob] = useState(null);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -66,12 +58,12 @@ function App() {
     }
   };
 
-  const handleSubmit = async (e) => {
+  const handleGenerate = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    setImages([]);
-    setDownloadUrl(null);
+    setPreviewImages([]);
+    setZipBlob(null);
 
     try {
       const response = await axios.post(
@@ -80,48 +72,44 @@ function App() {
         { responseType: 'arraybuffer' }
       );
 
-      // Создаем URL для скачивания
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      setDownloadUrl(url);
+      const blob = new Blob([response.data], { type: 'application/zip' });
+      setZipBlob(blob);
 
-      // Распаковываем ZIP
       const zip = await JSZip.loadAsync(response.data);
       const imagePromises = [];
       
       zip.forEach((relativePath, zipEntry) => {
         if (!zipEntry.dir && zipEntry.name.match(/\.(png|jpg|jpeg)$/i)) {
           imagePromises.push(
-            zipEntry.async('blob').then(blob => ({
+            zipEntry.async('base64').then(base64 => ({
               name: zipEntry.name,
-              url: URL.createObjectURL(blob)
+              src: `data:image/png;base64,${base64}`
             }))
           );
         }
       });
 
-      const extractedImages = await Promise.all(imagePromises);
-      setImages(extractedImages);
+      const images = await Promise.all(imagePromises);
+      setPreviewImages(images);
 
     } catch (err) {
-      let errorMessage = 'Произошла ошибка';
-      
-      if (err.response?.data) {
-        try {
-          // Пытаемся распарсить ошибку как JSON
-          const decoder = new TextDecoder('utf-8');
-          const errorData = JSON.parse(decoder.decode(new Uint8Array(err.response.data)));
-          errorMessage = errorData.detail?.error || errorData.detail?.message || errorMessage;
-        } catch {
-          errorMessage = err.message;
-        }
-      } else {
-        errorMessage = err.message;
-      }
-      
-      setError(errorMessage);
+      setError(err.response?.data?.message || err.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDownload = () => {
+    if (!zipBlob) return;
+    
+    const url = URL.createObjectURL(zipBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'lens_images.zip';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -131,8 +119,8 @@ function App() {
       </header>
 
       <div className="container">
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
+        <form onSubmit={handleGenerate}>
+        <div className="form-group">
             <label>Радиус линзы (radiusRatio):</label>
             <input
               type="number"
@@ -217,47 +205,38 @@ function App() {
             })}
           </div>
 
-          <button type="submit" disabled={loading}>
-            {loading ? 'Генерация...' : 'Сгенерировать изображения'}
-          </button>
-
-          {error && (
-            <div className="error">
-              <strong>Ошибка:</strong>
-              <div>{error}</div>
-            </div>
-          )}
-
-          {downloadUrl && (
-            <div className="download-section">
-              <a
-                href={downloadUrl}
-                download="lens_images.zip"
+          <div className="actions">
+            <button type="submit" disabled={loading}>
+              {loading ? 'Генерация...' : 'Сгенерировать'}
+            </button>
+            
+            {zipBlob && (
+              <button 
+                type="button" 
+                onClick={handleDownload}
                 className="download-btn"
               >
-                Скачать ZIP с изображениями
-              </a>
-            </div>
-          )}
+                Скачать ZIP
+              </button>
+            )}
+          </div>
 
-          {images.length > 0 && (
-            <div className="images-container">
-              <h3>Результаты:</h3>
-              <div className="images-grid">
-                {images.map((image, index) => (
-                  <div key={index} className="image-card">
-                    <h4>{image.name.replace('.png', '').replace('lens_', '')}</h4>
-                    <img 
-                      src={image.url} 
-                      alt={image.name} 
-                      className="generated-image"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {error && <div className="error">{error}</div>}
         </form>
+
+        {previewImages.length > 0 && (
+          <div className="images-container">
+            <h3>Результат:</h3>
+            <div className="images-grid">
+              {previewImages.map((img, index) => (
+                <div key={index} className="image-card">
+                  <h4>{img.name.replace('.png', '')}</h4>
+                  <img src={img.src} alt={img.name} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
